@@ -1,0 +1,60 @@
+# 데이터 디렉터리가 비어 있을 때(첫 기동) 한 번만 실행된다.
+# 스키마를 바꾸면 기존 볼륨에는 적용되지 않으므로 ALTER를 직접 실행하거나 PVC를 지우고 다시 만든다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-initdb
+  namespace: coldguard
+data:
+  # 중앙 DB 초안: 브리지로 올라오는 telemetry·event·ack를 수집 워커가 저장한다.
+  # 중복 키는 온프렘 MQTT·DB 규격 v1을 따른다. 통제 API 전용 테이블은 구현이 정해지면 추가한다.
+  01-schema.sql: |
+    CREATE TABLE IF NOT EXISTS telemetry (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      site_id VARCHAR(20) NOT NULL,
+      device_id VARCHAR(20) NOT NULL,
+      seq BIGINT NOT NULL,
+      measured_at DATETIME(3) NOT NULL,
+      temp_c DECIMAL(5,2) NOT NULL,
+      setpoint_c DECIMAL(5,2) NOT NULL,
+      door_open BOOLEAN NOT NULL,
+      cooling BOOLEAN NOT NULL,
+      status VARCHAR(20) NOT NULL,
+      received_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      UNIQUE KEY uk_site_device_seq (site_id, device_id, seq),
+      KEY idx_device_time (site_id, device_id, measured_at)
+    );
+    CREATE TABLE IF NOT EXISTS event_log (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      site_id VARCHAR(20) NOT NULL,
+      device_id VARCHAR(20) NOT NULL,
+      event_type VARCHAR(30) NOT NULL,
+      severity ENUM('info','warning','critical') NOT NULL,
+      temp_c DECIMAL(5,2) NULL,
+      predicted_sec INT NULL,
+      detail VARCHAR(255) NULL,
+      occurred_at DATETIME(3) NOT NULL,
+      received_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      UNIQUE KEY uk_event (site_id, device_id, event_type, occurred_at),
+      KEY idx_device_time (site_id, device_id, occurred_at)
+    );
+    -- ack 메시지에는 site_id·device_id가 없으므로 토픽(coldguard/<site>/<device>/ack)에서 채운다.
+    CREATE TABLE IF NOT EXISTS command_ack (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      cmd_id VARCHAR(50) NOT NULL,
+      site_id VARCHAR(20) NOT NULL,
+      device_id VARCHAR(20) NOT NULL,
+      result ENUM('accepted','rejected') NOT NULL,
+      reason ENUM('locked','expired','out_of_range','duplicate','unknown_device','apply_timeout') NULL,
+      acked_at DATETIME(3) NOT NULL,
+      received_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      UNIQUE KEY uk_ack (cmd_id, result, acked_at),
+      KEY idx_cmd_id (cmd_id)
+    );
+  # 수집 워커 계정 (SELECT, INSERT만). 통제 API 계정(MYSQL_USER)은 이미지 기본 동작으로 만들어진다.
+  # entrypoint가 이 파일을 source하므로 docker_process_sql 함수를 그대로 쓴다.
+  02-worker-user.sh: |
+    docker_process_sql --database=mysql <<-EOSQL
+    CREATE USER IF NOT EXISTS 'coldguard_worker'@'%' IDENTIFIED BY '${MYSQL_WORKER_PASSWORD}';
+    GRANT SELECT, INSERT ON \`${MYSQL_DATABASE}\`.* TO 'coldguard_worker'@'%';
+    EOSQL

@@ -1,0 +1,82 @@
+# 중앙 MQTT 브로커 (시설 브리지 종단, 통제 명령 중계)
+# RWO 볼륨이라 Recreate로 교체한다 (RollingUpdate면 새 Pod가 볼륨을 못 붙여 멈춘다)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mosquitto
+  namespace: coldguard
+  labels:
+    app.kubernetes.io/name: mosquitto
+    app.kubernetes.io/part-of: coldguard
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mosquitto
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mosquitto
+        app.kubernetes.io/part-of: coldguard
+    spec:
+      securityContext:
+        runAsUser: 1883
+        runAsGroup: 1883
+        fsGroup: 1883
+        runAsNonRoot: true
+      containers:
+        - name: mosquitto
+          image: eclipse-mosquitto:2.1.2-alpine
+          command: ["/usr/sbin/mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+          ports:
+            - name: mqtt
+              containerPort: 1883
+            - name: mqtts
+              containerPort: 8883
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          readinessProbe:
+            tcpSocket:
+              port: mqtt
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: mqtt
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: config
+              mountPath: /mosquitto/config
+              readOnly: true
+            - name: auth
+              mountPath: /mosquitto/auth
+              readOnly: true
+            - name: tls
+              mountPath: /mosquitto/tls
+              readOnly: true
+            - name: data
+              mountPath: /mosquitto/data
+      volumes:
+        - name: config
+          configMap:
+            name: mosquitto-config
+        - name: auth
+          secret:
+            secretName: mosquitto-auth
+            defaultMode: 0440
+        - name: tls
+          secret:
+            secretName: mosquitto-tls
+            defaultMode: 0440
+        - name: data
+          persistentVolumeClaim:
+            claimName: mosquitto-data

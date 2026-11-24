@@ -1,0 +1,99 @@
+# 매일 03:00(KST) 중앙 DB 논리 백업을 S3 mysql/ 접두사로 올린다 (버킷 수명주기로 7일 보관)
+# 1) initContainer: mysqldump → gzip → emptyDir
+# 2) container: Pod Identity(s3-backup)로 S3 업로드
+# 버킷 이름은 backup-params ConfigMap에서 읽는다 (README 참고, Git에 넣지 않음)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mysql-backup
+  namespace: coldguard
+  labels:
+    app.kubernetes.io/name: mysql-backup
+    app.kubernetes.io/part-of: coldguard
+spec:
+  schedule: "0 3 * * *"
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: mysql-backup
+            app.kubernetes.io/part-of: coldguard
+        spec:
+          serviceAccountName: s3-backup
+          restartPolicy: Never
+          initContainers:
+            - name: dump
+              image: mysql:8.4
+              command: ["bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  mysqldump -h mysql.coldguard.svc.cluster.local -u root \
+                    --single-transaction --routines --events --triggers \
+                    --set-gtid-purged=OFF \
+                    --databases "${MYSQL_DATABASE}" \
+                    | gzip > /backup/dump.sql.gz
+                  gzip -t /backup/dump.sql.gz
+                  ls -l /backup/dump.sql.gz
+              envFrom:
+                - configMapRef:
+                    name: mysql-params
+              env:
+                - name: MYSQL_PWD
+                  valueFrom:
+                    secretKeyRef:
+                      name: mysql-auth
+                      key: root-password
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          containers:
+            - name: upload
+              # Pod Identity 자격 증명은 AWS CLI 2.15 이상에서 읽힌다
+              image: amazon/aws-cli:2.17.0
+              command: ["bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  KEY="mysql/${MYSQL_DATABASE}-$(date +%Y%m%d-%H%M%S).sql.gz"
+                  aws s3 cp /backup/dump.sql.gz "s3://${BACKUP_BUCKET}/${KEY}" --only-show-errors
+                  echo "uploaded s3://${BACKUP_BUCKET}/${KEY}"
+              envFrom:
+                - configMapRef:
+                    name: mysql-params
+                - configMapRef:
+                    name: backup-params
+              env:
+                - name: TZ
+                  value: Asia/Seoul
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+                  readOnly: true
+          volumes:
+            - name: backup
+              emptyDir:
+                sizeLimit: 2Gi

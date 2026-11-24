@@ -1,0 +1,18 @@
+# 중앙 서비스 네임스페이스 (Pod Security baseline 강제)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: coldguard
+  labels:
+    app.kubernetes.io/part-of: coldguard
+    pod-security.kubernetes.io/enforce: baseline
+---
+# 모니터링 에이전트 네임스페이스
+# Fluent Bit가 노드의 /var/log(hostPath)를 읽어야 해서 privileged로 둔다.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: coldguard
+    pod-security.kubernetes.io/enforce: privileged

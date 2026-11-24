@@ -1,0 +1,20 @@
+# Argo CD 화면 tailnet 노출 (HTTPS, Tailscale이 인증서 발급)
+# 주소: https://argocd.<tailnet>.ts.net, ACL은 autogroup:member → tag:eks-argocd tcp:443
+# argocd-server는 server.insecure(HTTP 80)로 설치돼 있다 (bootstrap/values/argocd.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-tailnet
+  namespace: argocd
+  annotations:
+    tailscale.com/tags: "tag:eks-argocd"
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: argocd-server
+      port:
+        number: 80
+  tls:
+    - hosts:
+        - argocd

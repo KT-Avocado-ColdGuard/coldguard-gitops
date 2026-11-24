@@ -1,0 +1,12 @@
+# 브로커 재시작 시 QoS 1 메시지와 세션 유지용
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mosquitto-data
+  namespace: coldguard
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 1Gi
