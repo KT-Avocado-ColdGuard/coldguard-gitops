@@ -1,0 +1,72 @@
+# 모니터링 에이전트 계정과 클러스터 읽기 권한
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: prometheus-agent, namespace: monitoring}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: kube-state-metrics, namespace: monitoring}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fluent-bit, namespace: monitoring}
+automountServiceAccountToken: false   # 파일만 읽음 (API 호출 없음)
+---
+# Prometheus Agent: 노드·Pod 찾기 + kubelet cAdvisor(API 서버 프록시) 읽기
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: coldguard-prometheus-agent}
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/proxy, nodes/metrics, services, endpoints, pods]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - nonResourceURLs: [/metrics]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: coldguard-prometheus-agent}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: coldguard-prometheus-agent}
+subjects: [{kind: ServiceAccount, name: prometheus-agent, namespace: monitoring}]
+---
+# kube-state-metrics: 오브젝트 상태 읽기 전용
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: coldguard-kube-state-metrics}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, secrets, nodes, pods, services, serviceaccounts, resourcequotas, replicationcontrollers, limitranges, persistentvolumeclaims, persistentvolumes, namespaces, endpoints]
+    verbs: [list, watch]
+  - apiGroups: [apps]
+    resources: [statefulsets, daemonsets, deployments, replicasets]
+    verbs: [list, watch]
+  - apiGroups: [batch]
+    resources: [cronjobs, jobs]
+    verbs: [list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [list, watch]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses, volumeattachments]
+    verbs: [list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [list, watch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: coldguard-kube-state-metrics}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: coldguard-kube-state-metrics}
+subjects: [{kind: ServiceAccount, name: kube-state-metrics, namespace: monitoring}]
