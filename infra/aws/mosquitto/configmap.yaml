@@ -5,20 +5,21 @@ metadata:
   namespace: coldguard
 data:
   mosquitto.conf: |
-    # 계정·ACL은 모든 리스너에 공통으로 적용한다.
-    per_listener_settings false
+    # 계정·ACL은 모든 리스너에 공통으로 적용한다(2.x 기본 동작).
+    # 비밀번호·ACL·TLS 파일은 initContainer가 /mosquitto/secure에 mosquitto 소유, 0600으로 복사해 둔다.
+    # Mosquitto는 이 파일들을 mosquitto 사용자 권한으로 읽고 파일 권한을 검사하므로, Secret 볼륨을 직접 가리키면 열지 못했다.
     allow_anonymous false
-    password_file /mosquitto/auth/passwd
-    acl_file /mosquitto/config/acl
+    password_file /mosquitto/secure/passwd
+    acl_file /mosquitto/secure/acl
 
     # 클러스터 내부 전용 (ClusterIP Service만 연결). 통제 API·수집 워커가 쓴다.
     listener 1883
 
     # 시설 브리지용 TLS. Tailscale operator(coldguard-mqtt)로 tailnet에 노출한다.
     listener 8883
-    cafile /mosquitto/tls/ca.crt
-    certfile /mosquitto/tls/tls.crt
-    keyfile /mosquitto/tls/tls.key
+    cafile /mosquitto/secure/ca.crt
+    certfile /mosquitto/secure/tls.crt
+    keyfile /mosquitto/secure/tls.key
     tls_version tlsv1.2
 
     # 재시작해도 QoS 1 메시지와 세션을 유지한다.
