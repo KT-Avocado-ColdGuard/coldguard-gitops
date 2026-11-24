@@ -26,7 +26,8 @@ data:
     persistence true
     persistence_location /mosquitto/data/
     autosave_interval 60
-    max_queued_messages 10000
+    # 야간 노드 중지 후 아침에 시설 브리지가 몰아 보내는 양(장비 3대 x 12시간)을 담는다.
+    max_queued_messages 150000
 
     log_dest stdout
     log_type error
