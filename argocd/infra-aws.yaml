@@ -14,6 +14,7 @@ spec:
     path: infra/aws
   destination:
     server: https://kubernetes.default.svc
+    namespace: coldguard
   # Tailscale operator가 egress Service의 externalName을 덮어쓰므로 비교에서 뺀다.
   ignoreDifferences:
     - group: ""
