@@ -7,7 +7,7 @@ metadata:
   namespace: coldguard
 data:
   # 중앙 DB 초안: 브리지로 올라오는 telemetry·event·ack를 수집 워커가 저장한다.
-  # 중복 키는 온프렘 MQTT·DB 규격 v1을 따른다. 통제 API 전용 테이블은 구현이 정해지면 추가한다.
+  # 중복 키는 온프렘 MQTT·DB 규격 v1을 따른다. 통제 API가 발행한 명령은 command_request에 남긴다.
   01-schema.sql: |
     CREATE TABLE IF NOT EXISTS telemetry (
       id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -51,10 +51,36 @@ data:
       UNIQUE KEY uk_ack (cmd_id, result, acked_at),
       KEY idx_cmd_id (cmd_id)
     );
-  # 수집 워커 계정 (SELECT, INSERT만). 통제 API 계정(MYSQL_USER)은 이미지 기본 동작으로 만들어진다.
+    -- 통제 API가 발행한 명령 요청. 판정 결과는 command_ack에 cmd_id로 연결된다.
+    -- 시설 controller의 command_log(판정 기록)와는 다른 테이블이다.
+    -- cmd_id는 시설 controller가 중복 판정에 쓰므로 전역 유일(UUID)이어야 한다.
+    CREATE TABLE IF NOT EXISTS command_request (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      cmd_id VARCHAR(50) NOT NULL,
+      site_id VARCHAR(20) NOT NULL,
+      device_id VARCHAR(20) NOT NULL,
+      action VARCHAR(20) NOT NULL,
+      value DECIMAL(5,2) NOT NULL,
+      issued_by VARCHAR(50) NOT NULL,
+      issued_at DATETIME(3) NOT NULL,
+      expires_at DATETIME(3) NOT NULL,
+      UNIQUE KEY uk_cmd_id (cmd_id),
+      KEY idx_device_time (site_id, device_id, issued_at)
+    );
+  # 수집 워커 계정: 조회 전체 + 수집 테이블 3개만 INSERT. 통제 API 계정(MYSQL_USER)은 이미지 기본 동작으로 만들어진다.
   # entrypoint가 이 파일을 source하므로 docker_process_sql 함수를 그대로 쓴다.
   02-worker-user.sh: |
     docker_process_sql --database=mysql <<-EOSQL
     CREATE USER IF NOT EXISTS 'coldguard_worker'@'%' IDENTIFIED BY '${MYSQL_WORKER_PASSWORD}';
-    GRANT SELECT, INSERT ON \`${MYSQL_DATABASE}\`.* TO 'coldguard_worker'@'%';
+    GRANT SELECT ON \`${MYSQL_DATABASE}\`.* TO 'coldguard_worker'@'%';
+    GRANT INSERT ON \`${MYSQL_DATABASE}\`.telemetry TO 'coldguard_worker'@'%';
+    GRANT INSERT ON \`${MYSQL_DATABASE}\`.event_log TO 'coldguard_worker'@'%';
+    GRANT INSERT ON \`${MYSQL_DATABASE}\`.command_ack TO 'coldguard_worker'@'%';
+    EOSQL
+  # 통제 API 계정은 이미지가 DB 전체 권한(ALL)으로 만든다. 조회 전체 + command_request 기록만 남긴다.
+  03-api-user.sh: |
+    docker_process_sql --database=mysql <<-EOSQL
+    REVOKE ALL PRIVILEGES, GRANT OPTION FROM '${MYSQL_USER}'@'%';
+    GRANT SELECT ON \`${MYSQL_DATABASE}\`.* TO '${MYSQL_USER}'@'%';
+    GRANT INSERT ON \`${MYSQL_DATABASE}\`.command_request TO '${MYSQL_USER}'@'%';
     EOSQL

@@ -1,4 +1,5 @@
-# 매일 03:00(KST) 중앙 DB 논리 백업을 S3 mysql/ 접두사로 올린다 (버킷 수명주기로 7일 보관)
+# 매일 23:00(KST) 중앙 DB 논리 백업을 S3 mysql/ 접두사로 올린다 (버킷 수명주기로 7일 보관)
+# 야간(약 00~09시)에는 EKS 노드를 내리므로 그 전에 실행한다.
 # 1) initContainer: mysqldump → gzip → emptyDir
 # 2) container: Pod Identity(s3-backup)로 S3 업로드
 # 버킷 이름은 backup-params ConfigMap에서 읽는다 (README 참고, Git에 넣지 않음)
@@ -11,7 +12,7 @@ metadata:
     app.kubernetes.io/name: mysql-backup
     app.kubernetes.io/part-of: coldguard
 spec:
-  schedule: "0 3 * * *"
+  schedule: "0 23 * * *"
   timeZone: Asia/Seoul
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
