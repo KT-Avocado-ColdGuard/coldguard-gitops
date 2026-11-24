@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-config
+  namespace: coldguard
+data:
+  coldguard.cnf: |
+    [mysqld]
+    character-set-server = utf8mb4
+    collation-server     = utf8mb4_0900_ai_ci
+    skip-name-resolve
+    max_connections      = 100
+    # limits 1Gi 기준. 버퍼 풀을 더 크게 잡으면 OOMKilled
+    innodb_buffer_pool_size = 384M
+    # 시각은 UTC로 저장하고 화면에서 KST로 표시 (온프렘 규격 v1과 같음)
+    default-time-zone    = '+00:00'
+---
+# DB 이름과 통제 API 계정 이름 (비밀값 아님)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-params
+  namespace: coldguard
+data:
+  MYSQL_DATABASE: coldguard_central
+  MYSQL_USER: coldguard_api

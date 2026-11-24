@@ -1,0 +1,30 @@
+# Cloud 담당: 네임스페이스, MySQL, 백업, Mosquitto, tailnet 노출, KT 허브 egress
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: infra-aws
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: coldguard
+  source:
+    repoURL: https://github.com/KT-Avocado-ColdGuard/coldguard-gitops.git
+    targetRevision: main
+    path: infra/aws
+  destination:
+    server: https://kubernetes.default.svc
+  # Tailscale operator가 egress Service의 externalName을 덮어쓰므로 비교에서 뺀다.
+  ignoreDifferences:
+    - group: ""
+      kind: Service
+      name: kt-hub
+      namespace: monitoring
+      jsonPointers:
+        - /spec/externalName
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - RespectIgnoreDifferences=true

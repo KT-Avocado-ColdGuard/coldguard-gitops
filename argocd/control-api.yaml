@@ -1,0 +1,24 @@
+# 개발 담당: 중앙 통제 API Deployment·Service (apps/control-api)
+# Service 이름은 control-api, 포트 80(ClusterIP)으로 맞춘다. tailnet 노출은 infra/aws/ingress/control-api.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: control-api
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: coldguard
+  source:
+    repoURL: https://github.com/KT-Avocado-ColdGuard/coldguard-gitops.git
+    targetRevision: main
+    path: apps/control-api
+    directory:
+      exclude: "*.md"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: coldguard
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,1053 @@
+diff --git a/README.md b/README.md
+index 711f5b7..90286de 100644
+--- a/README.md
++++ b/README.md
+@@ -5,4 +5,8 @@
+ - database/: 관리자용 DB 초기화 SQL
+ - docs/: 연동 규격과 배포 안내
+ - k8s/: 배포 파일 작성 예정. 현재 .gitkeep만 있으며 배포 리소스는 미작성입니다.
++- argocd/: Argo CD AppProject와 Application (루트 Application이 이 폴더를 배포합니다. Cloud 담당과 협의)
++- infra/aws/: AWS EKS 공용 인프라 (Cloud 담당). [안내](infra/aws/README.md)
++- infra/aws/monitoring/: EKS 모니터링 에이전트 (모니터링 담당)
++- apps/control-api/: 중앙 통제 API 배포 (개발 담당)
+ - 비밀번호/Secret 실제 값/인증서는 커밋하지 않습니다.
+diff --git a/apps/control-api/README.md b/apps/control-api/README.md
+new file mode 100644
+index 0000000..e42475b
+--- /dev/null
++++ b/apps/control-api/README.md
+@@ -0,0 +1,8 @@
++# control-api (중앙 통제 API)
++
++Deployment·Service 매니페스트를 이 폴더에 둔다. Argo CD Application `control-api`가 coldguard 네임스페이스로 배포한다.
++
++- Service: 이름 `control-api`, 포트 80, ClusterIP (targetPort는 앱 포트)
++- tailnet 노출은 `infra/aws/ingress/control-api.yaml`(Tailscale Ingress)이 맡는다.
++- MySQL: `mysql.coldguard.svc.cluster.local:3306`, DB `coldguard_central`, 계정 `coldguard_api` (비밀번호는 Secret `mysql-auth`의 `api-password`)
++- MQTT: `mosquitto.coldguard.svc.cluster.local:1883`, 계정 `control-api` (비밀번호는 별도 전달)
+diff --git a/argocd/control-api.yaml b/argocd/control-api.yaml
+new file mode 100644
+index 0000000..df7867f
+--- /dev/null
++++ b/argocd/control-api.yaml
+@@ -0,0 +1,24 @@
++# 개발 담당: 중앙 통제 API Deployment·Service (apps/control-api)
++# Service 이름은 control-api, 포트 80(ClusterIP)으로 맞춘다. tailnet 노출은 infra/aws/ingress/control-api.yaml.
++apiVersion: argoproj.io/v1alpha1
++kind: Application
++metadata:
++  name: control-api
++  namespace: argocd
++  finalizers:
++    - resources-finalizer.argocd.argoproj.io
++spec:
++  project: coldguard
++  source:
++    repoURL: https://github.com/KT-Avocado-ColdGuard/coldguard-gitops.git
++    targetRevision: main
++    path: apps/control-api
++    directory:
++      exclude: "*.md"
++  destination:
++    server: https://kubernetes.default.svc
++    namespace: coldguard
++  syncPolicy:
++    automated:
++      prune: true
++      selfHeal: true
+diff --git a/argocd/infra-aws.yaml b/argocd/infra-aws.yaml
+new file mode 100644
+index 0000000..0f7624a
+--- /dev/null
++++ b/argocd/infra-aws.yaml
+@@ -0,0 +1,30 @@
++# Cloud 담당: 네임스페이스, MySQL, 백업, Mosquitto, tailnet 노출, KT 허브 egress
++apiVersion: argoproj.io/v1alpha1
++kind: Application
++metadata:
++  name: infra-aws
++  namespace: argocd
++  finalizers:
++    - resources-finalizer.argocd.argoproj.io
++spec:
++  project: coldguard
++  source:
++    repoURL: https://github.com/KT-Avocado-ColdGuard/coldguard-gitops.git
++    targetRevision: main
++    path: infra/aws
++  destination:
++    server: https://kubernetes.default.svc
++  # Tailscale operator가 egress Service의 externalName을 덮어쓰므로 비교에서 뺀다.
++  ignoreDifferences:
++    - group: ""
++      kind: Service
++      name: kt-hub
++      namespace: monitoring
++      jsonPointers:
++        - /spec/externalName
++  syncPolicy:
++    automated:
++      prune: true
++      selfHeal: true
++    syncOptions:
++      - RespectIgnoreDifferences=true
+diff --git a/argocd/monitoring.yaml b/argocd/monitoring.yaml
+new file mode 100644
+index 0000000..a64c7c1
+--- /dev/null
++++ b/argocd/monitoring.yaml
+@@ -0,0 +1,23 @@
++# 모니터링 담당: Prometheus Agent, kube-state-metrics, Fluent Bit (infra/aws/monitoring)
++apiVersion: argoproj.io/v1alpha1
++kind: Application
++metadata:
++  name: monitoring
++  namespace: argocd
++  finalizers:
++    - resources-finalizer.argocd.argoproj.io
++spec:
++  project: coldguard
++  source:
++    repoURL: https://github.com/KT-Avocado-ColdGuard/coldguard-gitops.git
++    targetRevision: main
++    path: infra/aws/monitoring
++    directory:
++      exclude: "*.md"
++  destination:
++    server: https://kubernetes.default.svc
++    namespace: monitoring
++  syncPolicy:
++    automated:
++      prune: true
++      selfHeal: true
+diff --git a/argocd/project.yaml b/argocd/project.yaml
+new file mode 100644
+index 0000000..4229ee3
+--- /dev/null
++++ b/argocd/project.yaml
+@@ -0,0 +1,26 @@
++# ColdGuard 앱 전용 AppProject
++# 이 저장소에서만 가져오고, coldguard·monitoring·argocd 네임스페이스에만 배포한다.
++apiVersion: argoproj.io/v1alpha1
++kind: AppProject
++metadata:
++  name: coldguard
++  namespace: argocd
++spec:
++  description: ColdGuard AWS EKS 배포
++  sourceRepos:
++    - https://github.com/KT-Avocado-ColdGuard/coldguard-gitops.git
++  destinations:
++    - server: https://kubernetes.default.svc
++      namespace: coldguard
++    - server: https://kubernetes.default.svc
++      namespace: monitoring
++    - server: https://kubernetes.default.svc
++      namespace: argocd
++  # 네임스페이스와 모니터링 에이전트의 클러스터 권한만 허용
++  clusterResourceWhitelist:
++    - group: ""
++      kind: Namespace
++    - group: rbac.authorization.k8s.io
++      kind: ClusterRole
++    - group: rbac.authorization.k8s.io
++      kind: ClusterRoleBinding
+diff --git a/infra/aws/README.md b/infra/aws/README.md
+new file mode 100644
+index 0000000..b161c74
+--- /dev/null
++++ b/infra/aws/README.md
+@@ -0,0 +1,110 @@
++# infra/aws (Cloud 담당)
++
++AWS EKS에 올라가는 공용 인프라입니다. Argo CD Application `infra-aws`가 이 폴더(kustomize)를 배포합니다.
++
++| 폴더 | 리소스 | 내용 |
++|---|---|---|
++| base | Namespace `coldguard`, `monitoring` | coldguard는 Pod Security baseline, monitoring은 privileged(Fluent Bit hostPath) |
++| base | ResourceQuota, LimitRange | coldguard 네임스페이스 상한과 requests·limits 기본값 |
++| base | ServiceAccount `s3-backup` | Terraform이 Pod Identity로 S3 백업 role을 연결해 둔 이름 |
++| base | Service `kt-hub` (monitoring) | KT 관제 허브(tailnet)로 나가는 Tailscale operator egress. 9090(remote_write), 3100(Loki) |
++| mysql | StatefulSet `mysql` (8.4, 1개) | gp3 10Gi, DB `coldguard_central`, 통제 API 계정 `coldguard_api`, 수집 워커 계정 `coldguard_worker` |
++| mysql | ConfigMap `mysql-initdb` | 첫 기동 때만 실행. 중앙 스키마 초안(telemetry, event_log, command_ack)과 워커 계정 |
++| backup | CronJob `mysql-backup` | 매일 03:00 KST, mysqldump → S3 `mysql/` (7일 보관) |
++| mosquitto | Deployment `mosquitto` (2.1.2) | 1883 클러스터 내부용, 8883 TLS 시설 브리지용. 계정별 토픽 ACL |
++| mosquitto | Service `mosquitto-tailnet` | 8883을 tailnet에 `coldguard-mqtt`로 노출 (`tag:eks-mqtt`) |
++| ingress | Ingress `control-api-tailnet` | 통제 API를 tailnet에 `control-api`로 HTTPS 노출 (`tag:eks-api`) |
++| ingress | Ingress `argocd-tailnet` (argocd) | Argo CD 화면을 tailnet에 `argocd`로 HTTPS 노출 (`tag:eks-argocd`) |
++
++모니터링 에이전트는 `monitoring/`(모니터링 담당), 통제 API는 `apps/control-api/`(개발 담당)에 있고 각각 별도 Application으로 배포합니다.
++
++## 사전 조건
++
++- Terraform(인프라)과 bootstrap(gp3 StorageClass, Argo CD, Tailscale operator) apply 완료
++- Tailscale 관리 콘솔에서 MagicDNS와 HTTPS Certificates 켜짐 (Tailscale Ingress가 인증서를 받는 데 필요)
++- Tailscale ACL에 `tag:k8s-operator`, `tag:k8s`, `tag:eks-api`, `tag:eks-mqtt`, `tag:eks-argocd`, `tag:eks-egress` 등록
++
++## 비밀값 준비 (Argo CD 동기화 전)
++
++Git에 넣지 않는 값은 클러스터에서 직접 만듭니다. Secret이 없으면 해당 Pod가 뜨지 않습니다.
++
++```bash
++kubectl create namespace coldguard
++
++# 1. MySQL 비밀번호
++kubectl -n coldguard create secret generic mysql-auth \
++  --from-literal=root-password="$(openssl rand -base64 24)" \
++  --from-literal=api-password="$(openssl rand -base64 24)" \
++  --from-literal=worker-password="$(openssl rand -base64 24)"
++
++# 2. 백업 버킷 이름
++kubectl -n coldguard create configmap backup-params \
++  --from-literal=BACKUP_BUCKET="$(terraform -chdir=<coldguard-iac 경로>/terraform output -raw backup_bucket_name)"
++
++# 3. Mosquitto 계정 (평문은 표준입력으로만 넘기고 해시된 파일만 받는다)
++#    계정: site01-bridge, site02-bridge, control-api, central-worker
++cat > /tmp/mq-plain <<'EOP'
++site01-bridge:<비밀번호>
++site02-bridge:<비밀번호>
++control-api:<비밀번호>
++central-worker:<비밀번호>
++EOP
++kubectl -n coldguard run mqpasswd --rm -i --quiet --restart=Never --image=eclipse-mosquitto:2.1.2-alpine \
++  --command -- sh -c 'cat > /tmp/p && mosquitto_passwd -U /tmp/p 2>/dev/null && cat /tmp/p' < /tmp/mq-plain > passwd
++rm -f /tmp/mq-plain
++cat passwd   # 네 줄, 각각 "이름:$7$..." 형태인지 확인
++kubectl -n coldguard create secret generic mosquitto-auth --from-file=passwd=passwd
++rm -f passwd
++
++# 4. Mosquitto TLS (보안 담당이 서명한 인증서, CA 인증서, 직접 만든 개인키)
++kubectl -n coldguard create secret generic mosquitto-tls \
++  --from-file=ca.crt=ca.crt \
++  --from-file=tls.crt=coldguard-mqtt.crt \
++  --from-file=tls.key=coldguard-mqtt.key
++```
++
++브리지 비밀번호는 온프렘 담당에게, `control-api`·`central-worker` 비밀번호와 MySQL 계정은 각 앱 담당에게 따로 전달합니다.
++
++## 확인
++
++```bash
++kubectl -n coldguard get pods,pvc,svc,ingress
++kubectl get svc -n monitoring kt-hub   # EXTERNAL-IP 자리에 operator가 만든 이름이 보여야 함
++
++# MySQL: 스키마와 계정
++kubectl -n coldguard exec mysql-0 -- sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -e "SHOW TABLES FROM coldguard_central; SELECT user,host FROM mysql.user;"'
++
++# Mosquitto: 내부 리스너로 발행 (계정이 맞으면 성공)
++kubectl -n coldguard run mqtest --rm -it --restart=Never --image=eclipse-mosquitto:2.1.2-alpine -- \
++  mosquitto_pub -h mosquitto -p 1883 -u control-api -P '<비밀번호>' -t coldguard/site01/fz01/cmd -m test
++
++# tailnet 노출: 관리 콘솔 Machines에 coldguard-mqtt, control-api, argocd와 egress 프록시가 보여야 함
++# 시설 VM에서 TLS 확인
++openssl s_client -connect coldguard-mqtt.<tailnet>.ts.net:8883 -CAfile ca.crt </dev/null | grep -E "Verify return code|subject="
++
++# KT 허브 egress (monitoring 네임스페이스에서)
++kubectl -n monitoring run nettest --rm -it --restart=Never --image=curlimages/curl -- \
++  curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 http://kt-hub:9090/-/healthy
++
++# 백업 수동 실행
++kubectl -n coldguard create job --from=cronjob/mysql-backup mysql-backup-manual-1
++kubectl -n coldguard logs job/mysql-backup-manual-1 -c upload
++```
++
++## 주의
++
++- gp3 StorageClass의 reclaimPolicy가 Delete라서 PVC를 지우면 EBS 볼륨과 데이터도 지워집니다. Application `infra-aws`를 지우면 네임스페이스까지 지워지므로 MySQL·Mosquitto 데이터가 모두 사라집니다.
++- `mysql-initdb`는 데이터 디렉터리가 비어 있을 때만 실행됩니다. 스키마를 바꾸면 기존 DB에는 직접 ALTER를 실행해야 합니다.
++- 노드를 밤에 0으로 내려 두면 03:00 백업은 실행되지 않습니다(1시간 뒤 건너뜀). 필요하면 수동 실행을 씁니다.
++- 시설 브리지 설정에서 `notifications false`로 두는 것을 권합니다. 켜 두면 브리지가 `$SYS/broker/connection/...`에 상태를 발행하려다 ACL에 막혀 로그가 남습니다.
++- 수집 워커는 `$share/central-worker/coldguard/+/+/{telemetry,ack,event}`로 공유 구독합니다(그룹 이름 고정). ACL 통과는 배포 후 아래처럼 확인합니다.
++
++  ```bash
++  # 터미널 1: 워커 계정으로 공유 구독
++  kubectl -n coldguard run mqsub --rm -it --restart=Never --image=eclipse-mosquitto:2.1.2-alpine -- \
++    mosquitto_sub -h mosquitto -p 1883 -u central-worker -P '<비밀번호>' -t '$share/central-worker/coldguard/+/+/telemetry' -v
++  # 터미널 2: 브리지 계정으로 발행 → 터미널 1에 찍히면 통과
++  kubectl -n coldguard run mqpub --rm -it --restart=Never --image=eclipse-mosquitto:2.1.2-alpine -- \
++    mosquitto_pub -h mosquitto -p 1883 -u site01-bridge -P '<비밀번호>' -t coldguard/site01/fz01/telemetry -m test
++  ```
++- 중앙 스키마는 초안입니다. 수집 워커와 통제 API 구현이 정해지면 함께 맞춥니다.
+diff --git a/infra/aws/backup/cronjob.yaml b/infra/aws/backup/cronjob.yaml
+new file mode 100644
+index 0000000..ef6847a
+--- /dev/null
++++ b/infra/aws/backup/cronjob.yaml
+@@ -0,0 +1,99 @@
++# 매일 03:00(KST) 중앙 DB 논리 백업을 S3 mysql/ 접두사로 올린다 (버킷 수명주기로 7일 보관)
++# 1) initContainer: mysqldump → gzip → emptyDir
++# 2) container: Pod Identity(s3-backup)로 S3 업로드
++# 버킷 이름은 backup-params ConfigMap에서 읽는다 (README 참고, Git에 넣지 않음)
++apiVersion: batch/v1
++kind: CronJob
++metadata:
++  name: mysql-backup
++  namespace: coldguard
++  labels:
++    app.kubernetes.io/name: mysql-backup
++    app.kubernetes.io/part-of: coldguard
++spec:
++  schedule: "0 3 * * *"
++  timeZone: Asia/Seoul
++  concurrencyPolicy: Forbid
++  startingDeadlineSeconds: 3600
++  successfulJobsHistoryLimit: 3
++  failedJobsHistoryLimit: 3
++  jobTemplate:
++    spec:
++      backoffLimit: 2
++      activeDeadlineSeconds: 1800
++      ttlSecondsAfterFinished: 86400
++      template:
++        metadata:
++          labels:
++            app.kubernetes.io/name: mysql-backup
++            app.kubernetes.io/part-of: coldguard
++        spec:
++          serviceAccountName: s3-backup
++          restartPolicy: Never
++          initContainers:
++            - name: dump
++              image: mysql:8.4
++              command: ["bash", "-c"]
++              args:
++                - |
++                  set -euo pipefail
++                  mysqldump -h mysql.coldguard.svc.cluster.local -u root \
++                    --single-transaction --routines --events --triggers \
++                    --set-gtid-purged=OFF \
++                    --databases "${MYSQL_DATABASE}" \
++                    | gzip > /backup/dump.sql.gz
++                  gzip -t /backup/dump.sql.gz
++                  ls -l /backup/dump.sql.gz
++              envFrom:
++                - configMapRef:
++                    name: mysql-params
++              env:
++                - name: MYSQL_PWD
++                  valueFrom:
++                    secretKeyRef:
++                      name: mysql-auth
++                      key: root-password
++              resources:
++                requests:
++                  cpu: 100m
++                  memory: 128Mi
++                limits:
++                  cpu: 500m
++                  memory: 256Mi
++              volumeMounts:
++                - name: backup
++                  mountPath: /backup
++          containers:
++            - name: upload
++              # Pod Identity 자격 증명은 AWS CLI 2.15 이상에서 읽힌다
++              image: amazon/aws-cli:2.17.0
++              command: ["bash", "-c"]
++              args:
++                - |
++                  set -euo pipefail
++                  KEY="mysql/${MYSQL_DATABASE}-$(date +%Y%m%d-%H%M%S).sql.gz"
++                  aws s3 cp /backup/dump.sql.gz "s3://${BACKUP_BUCKET}/${KEY}" --only-show-errors
++                  echo "uploaded s3://${BACKUP_BUCKET}/${KEY}"
++              envFrom:
++                - configMapRef:
++                    name: mysql-params
++                - configMapRef:
++                    name: backup-params
++              env:
++                - name: TZ
++                  value: Asia/Seoul
++              resources:
++                requests:
++                  cpu: 100m
++                  memory: 128Mi
++                limits:
++                  cpu: 500m
++                  memory: 256Mi
++              volumeMounts:
++                - name: backup
++                  mountPath: /backup
++                  readOnly: true
++          volumes:
++            - name: backup
++              emptyDir:
++                sizeLimit: 2Gi
+diff --git a/infra/aws/base/kt-hub-egress.yaml b/infra/aws/base/kt-hub-egress.yaml
+new file mode 100644
+index 0000000..a69b6a0
+--- /dev/null
++++ b/infra/aws/base/kt-hub-egress.yaml
+@@ -0,0 +1,22 @@
++# KT 관제 허브로 나가는 Tailscale operator egress
++# EKS Pod는 MagicDNS를 못 쓰므로 tailnet IP로 지정한다. operator가 spec.externalName을 덮어쓴다(Argo CD에서 무시 처리).
++#   remote_write: http://kt-hub.monitoring.svc.cluster.local:9090/api/v1/write
++#   Loki push:    http://kt-hub.monitoring.svc.cluster.local:3100/loki/api/v1/push
++apiVersion: v1
++kind: Service
++metadata:
++  name: kt-hub
++  namespace: monitoring
++  annotations:
++    tailscale.com/tailnet-ip: "100.98.228.126"
++    tailscale.com/tags: "tag:eks-egress"
++spec:
++  type: ExternalName
++  externalName: placeholder
++  ports:
++    - name: prometheus
++      port: 9090
++      protocol: TCP
++    - name: loki
++      port: 3100
++      protocol: TCP
+diff --git a/infra/aws/base/namespaces.yaml b/infra/aws/base/namespaces.yaml
+new file mode 100644
+index 0000000..328ab39
+--- /dev/null
++++ b/infra/aws/base/namespaces.yaml
+@@ -0,0 +1,18 @@
++# 중앙 서비스 네임스페이스 (Pod Security baseline 강제)
++apiVersion: v1
++kind: Namespace
++metadata:
++  name: coldguard
++  labels:
++    app.kubernetes.io/part-of: coldguard
++    pod-security.kubernetes.io/enforce: baseline
++---
++# 모니터링 에이전트 네임스페이스
++# Fluent Bit가 노드의 /var/log(hostPath)를 읽어야 해서 privileged로 둔다.
++apiVersion: v1
++kind: Namespace
++metadata:
++  name: monitoring
++  labels:
++    app.kubernetes.io/part-of: coldguard
++    pod-security.kubernetes.io/enforce: privileged
+diff --git a/infra/aws/base/resource-limits.yaml b/infra/aws/base/resource-limits.yaml
+new file mode 100644
+index 0000000..6ab5dfb
+--- /dev/null
++++ b/infra/aws/base/resource-limits.yaml
+@@ -0,0 +1,32 @@
++# t3.medium 3대(할당 가능 약 CPU 5.7, 메모리 10Gi) 안에서 coldguard 네임스페이스가 쓸 상한
++# argocd, tailscale, monitoring, kube-system은 포함하지 않는다.
++apiVersion: v1
++kind: ResourceQuota
++metadata:
++  name: coldguard-quota
++  namespace: coldguard
++spec:
++  hard:
++    requests.cpu: "3"
++    requests.memory: 6Gi
++    limits.cpu: "8"
++    limits.memory: 9Gi
++    pods: "40"
++    persistentvolumeclaims: "5"
++    requests.storage: 30Gi
++---
++# requests·limits를 적지 않은 컨테이너의 기본값
++apiVersion: v1
++kind: LimitRange
++metadata:
++  name: coldguard-defaults
++  namespace: coldguard
++spec:
++  limits:
++    - type: Container
++      defaultRequest:
++        cpu: 100m
++        memory: 128Mi
++      default:
++        cpu: 500m
++        memory: 256Mi
+diff --git a/infra/aws/base/serviceaccount-s3-backup.yaml b/infra/aws/base/serviceaccount-s3-backup.yaml
+new file mode 100644
+index 0000000..528f9d2
+--- /dev/null
++++ b/infra/aws/base/serviceaccount-s3-backup.yaml
+@@ -0,0 +1,6 @@
++# MySQL 백업 CronJob용. Terraform이 이 이름(coldguard/s3-backup)에 Pod Identity로 S3 쓰기 role을 연결해 두었다.
++apiVersion: v1
++kind: ServiceAccount
++metadata:
++  name: s3-backup
++  namespace: coldguard
+diff --git a/infra/aws/ingress/argocd.yaml b/infra/aws/ingress/argocd.yaml
+new file mode 100644
+index 0000000..c0efd35
+--- /dev/null
++++ b/infra/aws/ingress/argocd.yaml
+@@ -0,0 +1,20 @@
++# Argo CD 화면 tailnet 노출 (HTTPS, Tailscale이 인증서 발급)
++# 주소: https://argocd.<tailnet>.ts.net, ACL은 autogroup:member → tag:eks-argocd tcp:443
++# argocd-server는 server.insecure(HTTP 80)로 설치돼 있다 (bootstrap/values/argocd.yaml).
++apiVersion: networking.k8s.io/v1
++kind: Ingress
++metadata:
++  name: argocd-tailnet
++  namespace: argocd
++  annotations:
++    tailscale.com/tags: "tag:eks-argocd"
++spec:
++  ingressClassName: tailscale
++  defaultBackend:
++    service:
++      name: argocd-server
++      port:
++        number: 80
++  tls:
++    - hosts:
++        - argocd
+diff --git a/infra/aws/ingress/control-api.yaml b/infra/aws/ingress/control-api.yaml
+new file mode 100644
+index 0000000..8bc85f7
+--- /dev/null
++++ b/infra/aws/ingress/control-api.yaml
+@@ -0,0 +1,20 @@
++# 통제 API tailnet 노출 (HTTPS, Tailscale이 인증서 발급)
++# 주소: https://control-api.<tailnet>.ts.net, ACL은 tag:kt-hub·group:kt-admins → tag:eks-api tcp:443
++# 뒤의 Service(control-api, 80)는 apps/control-api에서 개발 쪽이 만든다.
++apiVersion: networking.k8s.io/v1
++kind: Ingress
++metadata:
++  name: control-api-tailnet
++  namespace: coldguard
++  annotations:
++    tailscale.com/tags: "tag:eks-api"
++spec:
++  ingressClassName: tailscale
++  defaultBackend:
++    service:
++      name: control-api
++      port:
++        number: 80
++  tls:
++    - hosts:
++        - control-api
+diff --git a/infra/aws/kustomization.yaml b/infra/aws/kustomization.yaml
+new file mode 100644
+index 0000000..ce44b6b
+--- /dev/null
++++ b/infra/aws/kustomization.yaml
+@@ -0,0 +1,22 @@
++# AWS EKS 공용 인프라 (Cloud 담당)
++# 비밀값(mysql-auth, mosquitto-auth, mosquitto-tls)과 backup-params는 README대로 먼저 만든다.
++# monitoring/ 폴더는 모니터링 담당 몫이라 여기 포함하지 않고 별도 Application으로 배포한다.
++apiVersion: kustomize.config.k8s.io/v1beta1
++kind: Kustomization
++
++resources:
++  - base/namespaces.yaml
++  - base/resource-limits.yaml
++  - base/serviceaccount-s3-backup.yaml
++  - base/kt-hub-egress.yaml
++  - mysql/configmap.yaml
++  - mysql/initdb.yaml
++  - mysql/service.yaml
++  - mysql/statefulset.yaml
++  - backup/cronjob.yaml
++  - mosquitto/configmap.yaml
++  - mosquitto/pvc.yaml
++  - mosquitto/deployment.yaml
++  - mosquitto/service.yaml
++  - ingress/control-api.yaml
++  - ingress/argocd.yaml
+diff --git a/infra/aws/monitoring/README.md b/infra/aws/monitoring/README.md
+new file mode 100644
+index 0000000..8bbe557
+--- /dev/null
++++ b/infra/aws/monitoring/README.md
+@@ -0,0 +1,10 @@
++# monitoring (모니터링 담당)
++
++Prometheus Agent, kube-state-metrics, Fluent Bit 매니페스트를 이 폴더에 둔다. Argo CD Application `monitoring`이 이 폴더를 그대로 배포한다.
++
++- 네임스페이스 `monitoring`은 `infra/aws/base/namespaces.yaml`에 있다(Pod Security privileged). 여기에는 넣지 않는다.
++- KT 허브 주소는 egress Service를 쓴다.
++  - remote_write: `http://kt-hub.monitoring.svc.cluster.local:9090/api/v1/write`
++  - Loki push: `http://kt-hub.monitoring.svc.cluster.local:3100/loki/api/v1/push`
++- ClusterRole·ClusterRoleBinding·ServiceAccount는 함께 넣는다.
++- 노드당 Pod 17개 제한이 있으니 DaemonSet 외에는 replicas 1로 둔다.
+diff --git a/infra/aws/mosquitto/configmap.yaml b/infra/aws/mosquitto/configmap.yaml
+new file mode 100644
+index 0000000..cd78e3d
+--- /dev/null
++++ b/infra/aws/mosquitto/configmap.yaml
+@@ -0,0 +1,67 @@
++apiVersion: v1
++kind: ConfigMap
++metadata:
++  name: mosquitto-config
++  namespace: coldguard
++data:
++  mosquitto.conf: |
++    # 계정·ACL은 모든 리스너에 공통으로 적용한다.
++    per_listener_settings false
++    allow_anonymous false
++    password_file /mosquitto/auth/passwd
++    acl_file /mosquitto/config/acl
++
++    # 클러스터 내부 전용 (ClusterIP Service만 연결). 통제 API·수집 워커가 쓴다.
++    listener 1883
++
++    # 시설 브리지용 TLS. Tailscale operator(coldguard-mqtt)로 tailnet에 노출한다.
++    listener 8883
++    cafile /mosquitto/tls/ca.crt
++    certfile /mosquitto/tls/tls.crt
++    keyfile /mosquitto/tls/tls.key
++    tls_version tlsv1.2
++
++    # 재시작해도 QoS 1 메시지와 세션을 유지한다.
++    persistence true
++    persistence_location /mosquitto/data/
++    autosave_interval 60
++    max_queued_messages 10000
++
++    log_dest stdout
++    log_type error
++    log_type warning
++    log_type notice
++    connection_messages true
++
++  # 토픽: coldguard/<site_id>/<device_id>/{telemetry,ack,event,cmd} (온프렘 MQTT·DB 규격 v1)
++  # 시설 내부 토픽(apply, applied, door, lock)은 브리지 대상이 아니므로 어떤 계정에도 열지 않는다.
++  acl: |
++    # 시설 브리지: telemetry·ack·event 올림, cmd 받음
++    user site01-bridge
++    topic write coldguard/site01/+/telemetry
++    topic write coldguard/site01/+/ack
++    topic write coldguard/site01/+/event
++    topic read coldguard/site01/+/cmd
++
++    user site02-bridge
++    topic write coldguard/site02/+/telemetry
++    topic write coldguard/site02/+/ack
++    topic write coldguard/site02/+/event
++    topic read coldguard/site02/+/cmd
++
++    # 통제 API: 명령 발행, 결과·이벤트 구독
++    user control-api
++    topic write coldguard/+/+/cmd
++    topic read coldguard/+/+/ack
++    topic read coldguard/+/+/event
++
++    # 중앙 수집 워커: 공유 구독으로 저장할 토픽만 읽기
++    # 구독은 $share/central-worker/<토픽> 형식으로 한다. 아래 $share 줄은 구독 검사가
++    # 접두어를 포함한 문자열로 이뤄지는 경우를 대비한 것이고, 배달 검사는 실제 토픽 줄로 통과한다.
++    user central-worker
++    topic read coldguard/+/+/telemetry
++    topic read coldguard/+/+/ack
++    topic read coldguard/+/+/event
++    topic read $share/central-worker/coldguard/+/+/telemetry
++    topic read $share/central-worker/coldguard/+/+/ack
++    topic read $share/central-worker/coldguard/+/+/event
+diff --git a/infra/aws/mosquitto/deployment.yaml b/infra/aws/mosquitto/deployment.yaml
+new file mode 100644
+index 0000000..20195ad
+--- /dev/null
++++ b/infra/aws/mosquitto/deployment.yaml
+@@ -0,0 +1,82 @@
++# 중앙 MQTT 브로커 (시설 브리지 종단, 통제 명령 중계)
++# RWO 볼륨이라 Recreate로 교체한다 (RollingUpdate면 새 Pod가 볼륨을 못 붙여 멈춘다)
++apiVersion: apps/v1
++kind: Deployment
++metadata:
++  name: mosquitto
++  namespace: coldguard
++  labels:
++    app.kubernetes.io/name: mosquitto
++    app.kubernetes.io/part-of: coldguard
++spec:
++  replicas: 1
++  strategy:
++    type: Recreate
++  selector:
++    matchLabels:
++      app.kubernetes.io/name: mosquitto
++  template:
++    metadata:
++      labels:
++        app.kubernetes.io/name: mosquitto
++        app.kubernetes.io/part-of: coldguard
++    spec:
++      securityContext:
++        runAsUser: 1883
++        runAsGroup: 1883
++        fsGroup: 1883
++        runAsNonRoot: true
++      containers:
++        - name: mosquitto
++          image: eclipse-mosquitto:2.1.2-alpine
++          command: ["/usr/sbin/mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
++          ports:
++            - name: mqtt
++              containerPort: 1883
++            - name: mqtts
++              containerPort: 8883
++          resources:
++            requests:
++              cpu: 50m
++              memory: 64Mi
++            limits:
++              cpu: 200m
++              memory: 256Mi
++          readinessProbe:
++            tcpSocket:
++              port: mqtt
++            periodSeconds: 10
++          livenessProbe:
++            tcpSocket:
++              port: mqtt
++            initialDelaySeconds: 10
++            periodSeconds: 20
++          securityContext:
++            allowPrivilegeEscalation: false
++          volumeMounts:
++            - name: config
++              mountPath: /mosquitto/config
++              readOnly: true
++            - name: auth
++              mountPath: /mosquitto/auth
++              readOnly: true
++            - name: tls
++              mountPath: /mosquitto/tls
++              readOnly: true
++            - name: data
++              mountPath: /mosquitto/data
++      volumes:
++        - name: config
++          configMap:
++            name: mosquitto-config
++        - name: auth
++          secret:
++            secretName: mosquitto-auth
++            defaultMode: 0440
++        - name: tls
++          secret:
++            secretName: mosquitto-tls
++            defaultMode: 0440
++        - name: data
++          persistentVolumeClaim:
++            claimName: mosquitto-data
+diff --git a/infra/aws/mosquitto/pvc.yaml b/infra/aws/mosquitto/pvc.yaml
+new file mode 100644
+index 0000000..6962af6
+--- /dev/null
++++ b/infra/aws/mosquitto/pvc.yaml
+@@ -0,0 +1,12 @@
++# 브로커 재시작 시 QoS 1 메시지와 세션 유지용
++apiVersion: v1
++kind: PersistentVolumeClaim
++metadata:
++  name: mosquitto-data
++  namespace: coldguard
++spec:
++  accessModes: ["ReadWriteOnce"]
++  storageClassName: gp3
++  resources:
++    requests:
++      storage: 1Gi
+diff --git a/infra/aws/mosquitto/service.yaml b/infra/aws/mosquitto/service.yaml
+new file mode 100644
+index 0000000..a669cc1
+--- /dev/null
++++ b/infra/aws/mosquitto/service.yaml
+@@ -0,0 +1,38 @@
++# 클러스터 내부 주소: mosquitto.coldguard.svc.cluster.local (1883 평문, 8883 TLS)
++apiVersion: v1
++kind: Service
++metadata:
++  name: mosquitto
++  namespace: coldguard
++  labels:
++    app.kubernetes.io/name: mosquitto
++spec:
++  selector:
++    app.kubernetes.io/name: mosquitto
++  ports:
++    - name: mqtt
++      port: 1883
++      targetPort: mqtt
++    - name: mqtts
++      port: 8883
++      targetPort: mqtts
++---
++# 시설 브리지용 tailnet 노출 (TLS 8883만)
++# 주소: coldguard-mqtt.<tailnet>.ts.net:8883, ACL은 tag:onprem → tag:eks-mqtt tcp:8883
++apiVersion: v1
++kind: Service
++metadata:
++  name: mosquitto-tailnet
++  namespace: coldguard
++  annotations:
++    tailscale.com/hostname: coldguard-mqtt
++    tailscale.com/tags: "tag:eks-mqtt"
++spec:
++  type: LoadBalancer
++  loadBalancerClass: tailscale
++  selector:
++    app.kubernetes.io/name: mosquitto
++  ports:
++    - name: mqtts
++      port: 8883
++      targetPort: mqtts
+diff --git a/infra/aws/mysql/configmap.yaml b/infra/aws/mysql/configmap.yaml
+new file mode 100644
+index 0000000..0add4e0
+--- /dev/null
++++ b/infra/aws/mysql/configmap.yaml
+@@ -0,0 +1,26 @@
++apiVersion: v1
++kind: ConfigMap
++metadata:
++  name: mysql-config
++  namespace: coldguard
++data:
++  coldguard.cnf: |
++    [mysqld]
++    character-set-server = utf8mb4
++    collation-server     = utf8mb4_0900_ai_ci
++    skip-name-resolve
++    max_connections      = 100
++    # limits 1Gi 기준. 버퍼 풀을 더 크게 잡으면 OOMKilled
++    innodb_buffer_pool_size = 384M
++    # 시각은 UTC로 저장하고 화면에서 KST로 표시 (온프렘 규격 v1과 같음)
++    default-time-zone    = '+00:00'
++---
++# DB 이름과 통제 API 계정 이름 (비밀값 아님)
++apiVersion: v1
++kind: ConfigMap
++metadata:
++  name: mysql-params
++  namespace: coldguard
++data:
++  MYSQL_DATABASE: coldguard_central
++  MYSQL_USER: coldguard_api
+diff --git a/infra/aws/mysql/initdb.yaml b/infra/aws/mysql/initdb.yaml
+new file mode 100644
+index 0000000..ce37e7f
+--- /dev/null
++++ b/infra/aws/mysql/initdb.yaml
+@@ -0,0 +1,60 @@
++# 데이터 디렉터리가 비어 있을 때(첫 기동) 한 번만 실행된다.
++# 스키마를 바꾸면 기존 볼륨에는 적용되지 않으므로 ALTER를 직접 실행하거나 PVC를 지우고 다시 만든다.
++apiVersion: v1
++kind: ConfigMap
++metadata:
++  name: mysql-initdb
++  namespace: coldguard
++data:
++  # 중앙 DB 초안: 브리지로 올라오는 telemetry·event·ack를 수집 워커가 저장한다.
++  # 중복 키는 온프렘 MQTT·DB 규격 v1을 따른다. 통제 API 전용 테이블은 구현이 정해지면 추가한다.
++  01-schema.sql: |
++    CREATE TABLE IF NOT EXISTS telemetry (
++      id BIGINT AUTO_INCREMENT PRIMARY KEY,
++      site_id VARCHAR(20) NOT NULL,
++      device_id VARCHAR(20) NOT NULL,
++      seq BIGINT NOT NULL,
++      measured_at DATETIME(3) NOT NULL,
++      temp_c DECIMAL(5,2) NOT NULL,
++      setpoint_c DECIMAL(5,2) NOT NULL,
++      door_open BOOLEAN NOT NULL,
++      cooling BOOLEAN NOT NULL,
++      status VARCHAR(20) NOT NULL,
++      received_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
++      UNIQUE KEY uk_site_device_seq (site_id, device_id, seq),
++      KEY idx_device_time (site_id, device_id, measured_at)
++    );
++    CREATE TABLE IF NOT EXISTS event_log (
++      id BIGINT AUTO_INCREMENT PRIMARY KEY,
++      site_id VARCHAR(20) NOT NULL,
++      device_id VARCHAR(20) NOT NULL,
++      event_type VARCHAR(30) NOT NULL,
++      severity ENUM('info','warning','critical') NOT NULL,
++      temp_c DECIMAL(5,2) NULL,
++      predicted_sec INT NULL,
++      detail VARCHAR(255) NULL,
++      occurred_at DATETIME(3) NOT NULL,
++      received_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
++      UNIQUE KEY uk_event (site_id, device_id, event_type, occurred_at),
++      KEY idx_device_time (site_id, device_id, occurred_at)
++    );
++    -- ack 메시지에는 site_id·device_id가 없으므로 토픽(coldguard/<site>/<device>/ack)에서 채운다.
++    CREATE TABLE IF NOT EXISTS command_ack (
++      id BIGINT AUTO_INCREMENT PRIMARY KEY,
++      cmd_id VARCHAR(50) NOT NULL,
++      site_id VARCHAR(20) NOT NULL,
++      device_id VARCHAR(20) NOT NULL,
++      result ENUM('accepted','rejected') NOT NULL,
++      reason ENUM('locked','expired','out_of_range','duplicate','unknown_device','apply_timeout') NULL,
++      acked_at DATETIME(3) NOT NULL,
++      received_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
++      UNIQUE KEY uk_ack (cmd_id, result, acked_at),
++      KEY idx_cmd_id (cmd_id)
++    );
++  # 수집 워커 계정 (SELECT, INSERT만). 통제 API 계정(MYSQL_USER)은 이미지 기본 동작으로 만들어진다.
++  # entrypoint가 이 파일을 source하므로 docker_process_sql 함수를 그대로 쓴다.
++  02-worker-user.sh: |
++    docker_process_sql --database=mysql <<-EOSQL
++    CREATE USER IF NOT EXISTS 'coldguard_worker'@'%' IDENTIFIED BY '${MYSQL_WORKER_PASSWORD}';
++    GRANT SELECT, INSERT ON \`${MYSQL_DATABASE}\`.* TO 'coldguard_worker'@'%';
++    EOSQL
+diff --git a/infra/aws/mysql/secret.example.yaml b/infra/aws/mysql/secret.example.yaml
+new file mode 100644
+index 0000000..c338df8
+--- /dev/null
++++ b/infra/aws/mysql/secret.example.yaml
+@@ -0,0 +1,11 @@
++# 형식 예시만 둔다. 이 파일은 적용하지 않고 실제 값은 README의 kubectl 명령으로 만든다.
++apiVersion: v1
++kind: Secret
++metadata:
++  name: mysql-auth
++  namespace: coldguard
++type: Opaque
++stringData:
++  root-password: <랜덤 32자>
++  api-password: <랜덤 32자>      # coldguard_api (통제 API)
++  worker-password: <랜덤 32자>   # coldguard_worker (수집 워커)
+diff --git a/infra/aws/mysql/service.yaml b/infra/aws/mysql/service.yaml
+new file mode 100644
+index 0000000..a8714c6
+--- /dev/null
++++ b/infra/aws/mysql/service.yaml
+@@ -0,0 +1,32 @@
++# 앱 접속 주소: mysql.coldguard.svc.cluster.local:3306
++apiVersion: v1
++kind: Service
++metadata:
++  name: mysql
++  namespace: coldguard
++  labels:
++    app.kubernetes.io/name: mysql
++spec:
++  selector:
++    app.kubernetes.io/name: mysql
++  ports:
++    - name: mysql
++      port: 3306
++      targetPort: mysql
++---
++# StatefulSet용 headless Service
++apiVersion: v1
++kind: Service
++metadata:
++  name: mysql-headless
++  namespace: coldguard
++  labels:
++    app.kubernetes.io/name: mysql
++spec:
++  clusterIP: None
++  selector:
++    app.kubernetes.io/name: mysql
++  ports:
++    - name: mysql
++      port: 3306
++      targetPort: mysql
+diff --git a/infra/aws/mysql/statefulset.yaml b/infra/aws/mysql/statefulset.yaml
+new file mode 100644
+index 0000000..e4f297d
+--- /dev/null
++++ b/infra/aws/mysql/statefulset.yaml
+@@ -0,0 +1,98 @@
++# 중앙 MySQL (단일 레플리카)
++# EBS 볼륨 때문에 처음 뜬 AZ에 묶인다. 그 AZ 노드가 없으면 노드가 돌아올 때까지 기다린다.
++apiVersion: apps/v1
++kind: StatefulSet
++metadata:
++  name: mysql
++  namespace: coldguard
++  labels:
++    app.kubernetes.io/name: mysql
++    app.kubernetes.io/part-of: coldguard
++spec:
++  serviceName: mysql-headless
++  replicas: 1
++  selector:
++    matchLabels:
++      app.kubernetes.io/name: mysql
++  template:
++    metadata:
++      labels:
++        app.kubernetes.io/name: mysql
++        app.kubernetes.io/part-of: coldguard
++    spec:
++      terminationGracePeriodSeconds: 60
++      securityContext:
++        fsGroup: 999
++      containers:
++        - name: mysql
++          image: mysql:8.4
++          ports:
++            - name: mysql
++              containerPort: 3306
++          envFrom:
++            - configMapRef:
++                name: mysql-params
++          env:
++            - name: MYSQL_ROOT_PASSWORD
++              valueFrom:
++                secretKeyRef:
++                  name: mysql-auth
++                  key: root-password
++            - name: MYSQL_PASSWORD
++              valueFrom:
++                secretKeyRef:
++                  name: mysql-auth
++                  key: api-password
++            - name: MYSQL_WORKER_PASSWORD
++              valueFrom:
++                secretKeyRef:
++                  name: mysql-auth
++                  key: worker-password
++          resources:
++            requests:
++              cpu: 250m
++              memory: 512Mi
++            limits:
++              cpu: "1"
++              memory: 1Gi
++          startupProbe:
++            exec:
++              command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 --silent"]
++            periodSeconds: 10
++            failureThreshold: 30
++          readinessProbe:
++            exec:
++              command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 --silent"]
++            periodSeconds: 10
++          livenessProbe:
++            exec:
++              command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 --silent"]
++            periodSeconds: 20
++            failureThreshold: 6
++          volumeMounts:
++            # ext4 볼륨 루트의 lost+found 때문에 초기화가 실패하므로 하위 폴더를 쓴다
++            - name: data
++              mountPath: /var/lib/mysql
++              subPath: mysql
++            - name: config
++              mountPath: /etc/mysql/conf.d
++              readOnly: true
++            - name: initdb
++              mountPath: /docker-entrypoint-initdb.d
++              readOnly: true
++      volumes:
++        - name: config
++          configMap:
++            name: mysql-config
++        - name: initdb
++          configMap:
++            name: mysql-initdb
++  volumeClaimTemplates:
++    - metadata:
++        name: data
++      spec:
++        accessModes: ["ReadWriteOnce"]
++        storageClassName: gp3
++        resources:
++          requests:
++            storage: 10Gi

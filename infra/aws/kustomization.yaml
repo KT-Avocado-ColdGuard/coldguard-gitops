@@ -1,0 +1,22 @@
+# AWS EKS 공용 인프라 (Cloud 담당)
+# 비밀값(mysql-auth, mosquitto-auth, mosquitto-tls)과 backup-params는 README대로 먼저 만든다.
+# monitoring/ 폴더는 모니터링 담당 몫이라 여기 포함하지 않고 별도 Application으로 배포한다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - base/namespaces.yaml
+  - base/resource-limits.yaml
+  - base/serviceaccount-s3-backup.yaml
+  - base/kt-hub-egress.yaml
+  - mysql/configmap.yaml
+  - mysql/initdb.yaml
+  - mysql/service.yaml
+  - mysql/statefulset.yaml
+  - backup/cronjob.yaml
+  - mosquitto/configmap.yaml
+  - mosquitto/pvc.yaml
+  - mosquitto/deployment.yaml
+  - mosquitto/service.yaml
+  - ingress/control-api.yaml
+  - ingress/argocd.yaml

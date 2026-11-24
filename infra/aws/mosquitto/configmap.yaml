@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mosquitto-config
+  namespace: coldguard
+data:
+  mosquitto.conf: |
+    # 계정·ACL은 모든 리스너에 공통으로 적용한다.
+    per_listener_settings false
+    allow_anonymous false
+    password_file /mosquitto/auth/passwd
+    acl_file /mosquitto/config/acl
+
+    # 클러스터 내부 전용 (ClusterIP Service만 연결). 통제 API·수집 워커가 쓴다.
+    listener 1883
+
+    # 시설 브리지용 TLS. Tailscale operator(coldguard-mqtt)로 tailnet에 노출한다.
+    listener 8883
+    cafile /mosquitto/tls/ca.crt
+    certfile /mosquitto/tls/tls.crt
+    keyfile /mosquitto/tls/tls.key
+    tls_version tlsv1.2
+
+    # 재시작해도 QoS 1 메시지와 세션을 유지한다.
+    persistence true
+    persistence_location /mosquitto/data/
+    autosave_interval 60
+    max_queued_messages 10000
+
+    log_dest stdout
+    log_type error
+    log_type warning
+    log_type notice
+    connection_messages true
+
+  # 토픽: coldguard/<site_id>/<device_id>/{telemetry,ack,event,cmd} (온프렘 MQTT·DB 규격 v1)
+  # 시설 내부 토픽(apply, applied, door, lock)은 브리지 대상이 아니므로 어떤 계정에도 열지 않는다.
+  acl: |
+    # 시설 브리지: telemetry·ack·event 올림, cmd 받음
+    user site01-bridge
+    topic write coldguard/site01/+/telemetry
+    topic write coldguard/site01/+/ack
+    topic write coldguard/site01/+/event
+    topic read coldguard/site01/+/cmd
+
+    user site02-bridge
+    topic write coldguard/site02/+/telemetry
+    topic write coldguard/site02/+/ack
+    topic write coldguard/site02/+/event
+    topic read coldguard/site02/+/cmd
+
+    # 통제 API: 명령 발행, 결과·이벤트 구독
+    user control-api
+    topic write coldguard/+/+/cmd
+    topic read coldguard/+/+/ack
+    topic read coldguard/+/+/event
+
+    # 중앙 수집 워커: 공유 구독으로 저장할 토픽만 읽기
+    # 구독은 $share/central-worker/<토픽> 형식으로 한다. 아래 $share 줄은 구독 검사가
+    # 접두어를 포함한 문자열로 이뤄지는 경우를 대비한 것이고, 배달 검사는 실제 토픽 줄로 통과한다.
+    user central-worker
+    topic read coldguard/+/+/telemetry
+    topic read coldguard/+/+/ack
+    topic read coldguard/+/+/event
+    topic read $share/central-worker/coldguard/+/+/telemetry
+    topic read $share/central-worker/coldguard/+/+/ack
+    topic read $share/central-worker/coldguard/+/+/event

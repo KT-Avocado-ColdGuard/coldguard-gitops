@@ -1,0 +1,22 @@
+# KT 관제 허브로 나가는 Tailscale operator egress
+# EKS Pod는 MagicDNS를 못 쓰므로 tailnet IP로 지정한다. operator가 spec.externalName을 덮어쓴다(Argo CD에서 무시 처리).
+#   remote_write: http://kt-hub.monitoring.svc.cluster.local:9090/api/v1/write
+#   Loki push:    http://kt-hub.monitoring.svc.cluster.local:3100/loki/api/v1/push
+apiVersion: v1
+kind: Service
+metadata:
+  name: kt-hub
+  namespace: monitoring
+  annotations:
+    tailscale.com/tailnet-ip: "100.98.228.126"
+    tailscale.com/tags: "tag:eks-egress"
+spec:
+  type: ExternalName
+  externalName: placeholder
+  ports:
+    - name: prometheus
+      port: 9090
+      protocol: TCP
+    - name: loki
+      port: 3100
+      protocol: TCP

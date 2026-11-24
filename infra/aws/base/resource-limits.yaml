@@ -1,0 +1,32 @@
+# t3.medium 3대(할당 가능 약 CPU 5.7, 메모리 10Gi) 안에서 coldguard 네임스페이스가 쓸 상한
+# argocd, tailscale, monitoring, kube-system은 포함하지 않는다.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: coldguard-quota
+  namespace: coldguard
+spec:
+  hard:
+    requests.cpu: "3"
+    requests.memory: 6Gi
+    limits.cpu: "8"
+    limits.memory: 9Gi
+    pods: "40"
+    persistentvolumeclaims: "5"
+    requests.storage: 30Gi
+---
+# requests·limits를 적지 않은 컨테이너의 기본값
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: coldguard-defaults
+  namespace: coldguard
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      default:
+        cpu: 500m
+        memory: 256Mi
