@@ -1,0 +1,98 @@
+# coldguard 네임스페이스 수신(ingress) 제한. VPC CNI 네트워크 정책 에이전트가 적용한다.
+# 송신은 제한하지 않는다. 아래 규칙에 없는 수신은 모두 막힌다.
+# 통제 API 규칙은 API를 배포할 때 함께 추가한다.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: coldguard
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# MySQL: 워커, 회수 Job, mysqld-exporter, 백업 Job만 접속한다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mysql-ingress
+  namespace: coldguard
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mysql
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [central-worker, central-worker-recover, mysqld-exporter, mysql-backup]
+      ports:
+        - protocol: TCP
+          port: 3306
+---
+# Mosquitto
+# 1883(클러스터 내부 평문): 워커, 회수 Job, mosquitto-exporter
+# 8883(TLS): Tailscale 프록시 경유. 온프렘 브리지, KT 허브 상태 점검, 부하 시험기가 모두 이 경로로 들어온다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mosquitto-ingress
+  namespace: coldguard
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mosquitto
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [central-worker, central-worker-recover, mosquitto-exporter]
+      ports:
+        - protocol: TCP
+          port: 1883
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tailscale
+          podSelector:
+            matchLabels:
+              tailscale.com/parent-resource: mosquitto-tailnet
+              tailscale.com/parent-resource-ns: coldguard
+      ports:
+        - protocol: TCP
+          port: 8883
+---
+# 지표 수집: monitoring 네임스페이스의 Prometheus agent만 접속한다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: metrics-ingress
+  namespace: coldguard
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [central-worker, mysqld-exporter, mosquitto-exporter]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app: prometheus-agent
+      ports:
+        - protocol: TCP
+          port: 9203
+        - protocol: TCP
+          port: 9104
+        - protocol: TCP
+          port: 9234

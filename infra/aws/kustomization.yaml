@@ -24,3 +24,4 @@ resources:
   # prometheus.io/scrape 표시를 자동 수집하므로 agent 설정은 바꾸지 않는다.
   - exporters/mysqld-exporter.yaml
   - exporters/mosquitto-exporter.yaml
+  - netpol/networkpolicies.yaml
