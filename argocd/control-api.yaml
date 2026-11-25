@@ -1,5 +1,8 @@
-# 개발 담당: 중앙 통제 API Deployment·Service (apps/control-api)
-# Service 이름은 control-api, 포트 80(ClusterIP)으로 맞춘다. tailnet 노출은 infra/aws/ingress/control-api.yaml.
+# 중앙 통제 API 배포.
+# 매니페스트는 비공개 저장소 coldguard-deploy의 control-api/ 에 있다.
+# (이미지 주소에 AWS 계정 ID가 들어가므로 공개 저장소인 이 gitops에는 두지 않는다.)
+# tailnet 노출은 infra/aws/ingress/control-api.yaml(Tailscale Ingress → Service control-api:80).
+# Argo CD가 비공개 저장소를 읽는 자격 증명은 central-worker와 같은 것을 쓴다.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -10,9 +13,9 @@ metadata:
 spec:
   project: coldguard
   source:
-    repoURL: https://github.com/KT-Avocado-ColdGuard/coldguard-gitops.git
+    repoURL: git@github.com:KT-Avocado-ColdGuard/coldguard-deploy.git
     targetRevision: main
-    path: apps/control-api
+    path: control-api
     directory:
       exclude: "*.md"
   destination:

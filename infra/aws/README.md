@@ -9,14 +9,14 @@ AWS EKS에 올라가는 공용 인프라입니다. Argo CD Application `infra-aw
 | base | ServiceAccount `s3-backup` | Terraform이 Pod Identity로 S3 백업 role을 연결해 둔 이름 |
 | base | Service `kt-hub` (monitoring) | KT 관제 허브(tailnet)로 나가는 Tailscale operator egress. 9090(remote_write), 3100(Loki) |
 | mysql | StatefulSet `mysql` (8.4, 1개) | gp3 10Gi, DB `coldguard_central`, 통제 API 계정 `coldguard_api`, 수집 워커 계정 `coldguard_worker` |
-| mysql | ConfigMap `mysql-initdb` | 첫 기동 때만 실행. 중앙 스키마 초안(telemetry, event_log, command_ack)과 워커 계정 |
+| mysql | ConfigMap `mysql-initdb` | 첫 기동 때만 실행. 중앙 스키마(telemetry, event_log, command_ack, command_request)와 계정(수집 워커, 통제 API, 감시) |
 | backup | CronJob `mysql-backup` | 매일 03:00 KST, mysqldump → S3 `mysql/` (7일 보관) |
 | mosquitto | Deployment `mosquitto` (2.1.2) | 1883 클러스터 내부용, 8883 TLS 시설 브리지용. 계정별 토픽 ACL |
 | mosquitto | Service `mosquitto-tailnet` | 8883을 tailnet에 `coldguard-mqtt`로 노출 (`tag:eks-mqtt`) |
 | ingress | Ingress `control-api-tailnet` | 통제 API를 tailnet에 `control-api`로 HTTPS 노출 (`tag:eks-api`) |
 | ingress | Ingress `argocd-tailnet` (argocd) | Argo CD 화면을 tailnet에 `argocd`로 HTTPS 노출 (`tag:eks-argocd`) |
 
-모니터링 에이전트는 `monitoring/`(모니터링 담당), 통제 API는 `apps/control-api/`(개발 담당)에 있고 각각 별도 Application으로 배포합니다.
+모니터링 에이전트는 `monitoring/`(모니터링 담당), 중앙 수집 워커와 통제 API는 비공개 저장소 coldguard-deploy(`central-worker/`, `control-api/`)에 있고 각각 별도 Application으로 배포합니다.
 
 ## 사전 조건
 
