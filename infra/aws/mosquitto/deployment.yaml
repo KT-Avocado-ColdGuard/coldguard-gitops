@@ -1,5 +1,6 @@
 # 중앙 MQTT 브로커 (시설 브리지 종단, 통제 명령 중계)
 # RWO 볼륨이라 Recreate로 교체한다 (RollingUpdate면 새 Pod가 볼륨을 못 붙여 멈춘다)
+# 가용영역 C 고정: MySQL과 같은 가용영역에 둔다 (아래 affinity 주석 참고)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,6 +27,17 @@ spec:
         runAsGroup: 1883
         fsGroup: 1883
         runAsNonRoot: true
+      # MySQL 볼륨(EBS)과 같은 가용영역 c에 둔다. EBS는 가용영역을 옮길 수 없어서,
+      # 상태를 가진 구성요소를 한 가용영역에 모아 의존하는 가용영역을 하나로 줄인다.
+      # 가용영역 장애 시에는 시설 브리지 큐가 메시지를 보존한다.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: topology.kubernetes.io/zone
+                    operator: In
+                    values: ["ap-northeast-2c"]
       # Secret·ConfigMap 볼륨 파일(root 소유 심볼릭 링크)을 Mosquitto 2.1이 열지 못해서
       # ("Unable to open pwfile"), mosquitto(1883) 소유 0600 일반 파일로 메모리 볼륨에 복사한다.
       initContainers:

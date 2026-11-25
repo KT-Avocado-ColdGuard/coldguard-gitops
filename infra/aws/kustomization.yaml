@@ -20,3 +20,7 @@ resources:
   - mosquitto/service.yaml
   - ingress/control-api.yaml
   - ingress/argocd.yaml
+  # 중앙 MySQL·Mosquitto 감시용 exporter. monitoring의 Prometheus agent가 coldguard 네임스페이스의
+  # prometheus.io/scrape 표시를 자동 수집하므로 agent 설정은 바꾸지 않는다.
+  - exporters/mysqld-exporter.yaml
+  - exporters/mosquitto-exporter.yaml
