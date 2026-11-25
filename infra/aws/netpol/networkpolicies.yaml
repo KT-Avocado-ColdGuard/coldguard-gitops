@@ -1,6 +1,5 @@
 # coldguard 네임스페이스 수신(ingress) 제한. VPC CNI 네트워크 정책 에이전트가 적용한다.
 # 송신은 제한하지 않는다. 아래 규칙에 없는 수신은 모두 막힌다.
-# 통제 API 규칙은 API를 배포할 때 함께 추가한다.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -11,7 +10,7 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
 ---
-# MySQL: 워커, 회수 Job, mysqld-exporter, 백업 Job만 접속한다.
+# MySQL: 워커, 회수 Job, 통제 API, mysqld-exporter, 백업 Job만 접속한다.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -28,13 +27,13 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [central-worker, central-worker-recover, mysqld-exporter, mysql-backup]
+                values: [central-worker, central-worker-recover, control-api, mysqld-exporter, mysql-backup]
       ports:
         - protocol: TCP
           port: 3306
 ---
 # Mosquitto
-# 1883(클러스터 내부 평문): 워커, 회수 Job, mosquitto-exporter
+# 1883(클러스터 내부 평문): 워커, 회수 Job, 통제 API(cmd 발행), mosquitto-exporter
 # 8883(TLS): Tailscale 프록시 경유. 온프렘 브리지, KT 허브 상태 점검, 부하 시험기가 모두 이 경로로 들어온다.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -52,7 +51,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [central-worker, central-worker-recover, mosquitto-exporter]
+                values: [central-worker, central-worker-recover, control-api, mosquitto-exporter]
       ports:
         - protocol: TCP
           port: 1883
@@ -79,7 +78,7 @@ spec:
     matchExpressions:
       - key: app.kubernetes.io/name
         operator: In
-        values: [central-worker, mysqld-exporter, mosquitto-exporter]
+        values: [central-worker, control-api, mysqld-exporter, mosquitto-exporter]
   policyTypes: [Ingress]
   ingress:
     - from:
@@ -96,3 +95,31 @@ spec:
           port: 9104
         - protocol: TCP
           port: 9234
+        - protocol: TCP
+          port: 9204
+---
+# 통제 API(8000): tailscale 네임스페이스의 control-api-tailnet Ingress 프록시만 접속한다.
+# 관제 UI·관리자·부하 시험기는 tailnet(HTTPS 443)으로 이 프록시를 거쳐 들어온다. 누가 프록시에 닿는지는 Tailscale ACL이 정한다.
+# 파드 상태 확인(kubelet)은 다른 규칙과 마찬가지로 막히지 않는다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: control-api-ingress
+  namespace: coldguard
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: control-api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tailscale
+          podSelector:
+            matchLabels:
+              tailscale.com/parent-resource: control-api-tailnet
+              tailscale.com/parent-resource-ns: coldguard
+      ports:
+        - protocol: TCP
+          port: 8000
