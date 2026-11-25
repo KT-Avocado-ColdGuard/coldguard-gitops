@@ -10,7 +10,7 @@ metadata:
 spec:
   project: coldguard
   source:
-    repoURL: https://github.com/KT-Avocado-ColdGuard/coldguard-deploy.git
+    repoURL: git@github.com:KT-Avocado-ColdGuard/coldguard-deploy.git
     targetRevision: main
     path: central-worker
   destination:
