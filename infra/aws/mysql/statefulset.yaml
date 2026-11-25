@@ -48,6 +48,12 @@ spec:
                 secretKeyRef:
                   name: mysql-auth
                   key: worker-password
+            # 감시 계정(mysqld-exporter). initdb 04-exporter-user.sh가 읽는다.
+            - name: MYSQL_EXPORTER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-auth
+                  key: exporter-password
           resources:
             requests:
               cpu: 250m

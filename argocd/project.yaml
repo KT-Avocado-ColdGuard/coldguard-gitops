@@ -9,6 +9,7 @@ spec:
   description: ColdGuard AWS EKS 배포
   sourceRepos:
     - https://github.com/KT-Avocado-ColdGuard/coldguard-gitops.git
+    - git@github.com:KT-Avocado-ColdGuard/coldguard-deploy.git
   destinations:
     - server: https://kubernetes.default.svc
       namespace: coldguard

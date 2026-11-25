@@ -84,3 +84,10 @@ data:
     GRANT SELECT ON \`${MYSQL_DATABASE}\`.* TO '${MYSQL_USER}'@'%';
     GRANT INSERT ON \`${MYSQL_DATABASE}\`.command_request TO '${MYSQL_USER}'@'%';
     EOSQL
+  # 감시 계정(mysqld-exporter): 서버 상태만 읽는다. 업무 테이블(coldguard_central)은 읽지 못한다.
+  04-exporter-user.sh: |
+    docker_process_sql --database=mysql <<-EOSQL
+    CREATE USER IF NOT EXISTS 'coldguard_exporter'@'%' IDENTIFIED BY '${MYSQL_EXPORTER_PASSWORD}' WITH MAX_USER_CONNECTIONS 3;
+    GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'coldguard_exporter'@'%';
+    GRANT SELECT ON performance_schema.* TO 'coldguard_exporter'@'%';
+    EOSQL

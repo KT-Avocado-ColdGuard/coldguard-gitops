@@ -67,3 +67,7 @@ data:
     topic read $share/central-worker/coldguard/+/+/telemetry
     topic read $share/central-worker/coldguard/+/+/ack
     topic read $share/central-worker/coldguard/+/+/event
+
+    # 감시(mosquitto-exporter): 브로커 상태 토픽만 읽기
+    user monitor
+    topic read $SYS/#
