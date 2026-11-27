@@ -56,6 +56,15 @@ cat passwd   # 네 줄, 각각 "이름:$7$..." 형태인지 확인
 kubectl -n coldguard create secret generic mosquitto-auth --from-file=passwd=passwd
 rm -f passwd
 
+# 3-1. 계정 추가 (예: 부하 시험용 kt-load). 기존 해시는 그대로 두고 한 줄만 붙인다.
+#      브로커는 시작할 때만 파일을 읽으므로, configmap.yaml의 ACL 변경과 함께 브로커가 재시작돼야 적용된다.
+kubectl -n coldguard get secret mosquitto-auth -o jsonpath='{.data.passwd}' | base64 -d > passwd
+printf 'kt-load:%s\n' '<비밀번호>' | kubectl -n coldguard run mqpasswd --rm -i --quiet --restart=Never \
+  --image=eclipse-mosquitto:2.1.2-alpine --command -- sh -c 'cat > /tmp/p && mosquitto_passwd -U /tmp/p 2>/dev/null && cat /tmp/p' >> passwd
+cut -d: -f1 passwd   # 계정 이름만 확인 (kt-load가 한 번만 있어야 함)
+kubectl -n coldguard create secret generic mosquitto-auth --from-file=passwd=passwd --dry-run=client -o yaml | kubectl apply -f -
+rm -f passwd
+
 # 4. Mosquitto TLS (보안 담당이 서명한 인증서, CA 인증서, 직접 만든 개인키)
 kubectl -n coldguard create secret generic mosquitto-tls \
   --from-file=ca.crt=ca.crt \
